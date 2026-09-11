@@ -11,8 +11,8 @@ def bakeout(measurements, bench, ui, log):
     cap = bench.bakeout(BAKEOUT_MAX_H)
     ui.bake_progress = 100
     t = np.array(cap["time_h"]); f = np.array(cap["tqcm_hz"])
-    # Rate over a 2 h window, Hz/h, from the frequency curve.
-    w = 8
+    # Rate over a 4 h window, Hz/h, from the frequency curve.
+    w = 16
     rate = np.full(t.size, np.nan)
     rate[w:] = (f[w:] - f[:-w]) / (t[w:] - t[:-w])
     rate_curve = np.where(np.isnan(rate), rate[w], rate)
