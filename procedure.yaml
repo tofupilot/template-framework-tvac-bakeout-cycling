@@ -1,0 +1,211 @@
+name: TVAC Bakeout and Thermal Cycling
+version: 0.1.0
+description: Thermal vacuum run for a smallsat star tracker. Pump-down to the ECSS pressure, bakeout at +60 C with a TQCM witness judged on the outgassing rate and the mass collected, four acceptance thermal vacuum cycles with a centroid check on a simulated star at every dwell, and a dry-nitrogen backfill gated on the unit being above the dew point.
+
+unit:
+  auto_identify: true
+  serial_number:
+    description: "Scan the tracker's label"
+    placeholder: "ST-200-0000"
+    pattern: "^ST-200-\\d{4}$"
+    default_value: "ST-200-0088"
+  part_number:
+    default_value: "ST-200-FM"
+  batch_number:
+    default_value: "LOT-2026-09"
+
+plugs:
+  - name: TVAC Bench
+    description: "Chamber shroud and plate, turbo pump and ion gauge, TQCM on a cold finger, star tracker telemetry and image link (mock, one plug per chamber)"
+    python: plugs.tvac_bench:TvacBench
+    key: bench
+
+setup:
+  - name: Identify
+    key: identify
+    python: phases.identify
+    measurements:
+      - name: Firmware Version
+        key: firmware_version
+        validators:
+          - {operator: matches, expected_value: "^3\\.\\d+\\.\\d+$"}
+      - name: Unit Temperature Start
+        key: unit_temp_start_c
+        unit: °C
+        validators:
+          - {operator: ">=", expected_value: 18.0}
+          - {operator: "<=", expected_value: 26.0}
+      - name: Pressure Start
+        key: pressure_start_hpa
+        unit: hPa
+        validators:
+          - {operator: ">=", expected_value: 900.0}
+
+main:
+  - name: Pump Down
+    key: pump_down
+    python: phases.pump_down
+    timeout: 12h
+    ui:
+      components:
+        - key: pump_progress
+          type: progress
+          label: "Pump-down"
+          description: "To 1e-5 hPa"
+          default_value: 0
+          max: 100
+    measurements:
+      - name: Pump-Down
+        key: pumpdown
+        title: Chamber pressure during pump-down
+        x_axis:
+          legend: Time
+          unit: h
+        y_axis:
+          - legend: Pressure
+            key: pressure
+            unit: hPa
+            aggregations:
+              - type: final_hpa
+                unit: hPa
+                validators:
+                  - {operator: "<=", expected_value: 1.0e-5}
+              - type: time_to_vacuum_h
+                unit: h
+                validators:
+                  - {operator: "<=", expected_value: 8.0}
+
+  - name: Bakeout
+    key: bakeout
+    python: phases.bakeout
+    depends_on: [pump_down]
+    timeout: 24h
+    ui:
+      components:
+        - key: bake_progress
+          type: progress
+          label: "Bakeout"
+          description: "+60 °C, TQCM at -20 °C, until the rate is clean"
+          default_value: 0
+          max: 100
+    measurements:
+      - name: Bake
+        key: bake
+        title: TQCM frequency, outgassing rate and unit temperature through the bake
+        x_axis:
+          legend: Time
+          unit: h
+        y_axis:
+          - legend: TQCM frequency shift
+            key: tqcm
+            unit: Hz
+            aggregations:
+              - type: duration_h
+                unit: h
+                validators:
+                  - {operator: ">=", expected_value: 36.0}
+                  - {operator: "<=", expected_value: 72.0}
+              - type: total_shift_hz
+                unit: Hz
+                validators:
+                  - {operator: "<=", expected_value: 800.0}
+          - legend: Outgassing rate
+            key: rate
+            unit: Hz/h
+            aggregations:
+              - type: final_hz_per_h
+                unit: Hz/h
+                validators:
+                  - {operator: "<=", expected_value: 1.0}
+              - type: clean_window_h
+                unit: h
+                validators:
+                  - {operator: ">=", expected_value: 6.0}
+          - legend: Unit temperature
+            key: unit
+            unit: °C
+            aggregations:
+              - type: max_c
+                unit: °C
+                validators:
+                  - {operator: "<=", expected_value: 65.0}
+
+  - name: TVAC Cycling
+    key: tvac_cycling
+    python: phases.tvac_cycling
+    depends_on: [bakeout]
+    timeout: 24h
+    ui:
+      components:
+        - key: cycle_progress
+          type: progress
+          label: "Thermal vacuum cycling"
+          description: "4 cycles, -30 to +55 °C, 2 h dwells, powered"
+          default_value: 0
+          max: 100
+    measurements:
+      - name: Profile
+        key: profile
+        title: Unit temperature through the four cycles
+        x_axis:
+          legend: Time
+          unit: h
+        y_axis:
+          - legend: Unit
+            key: unit
+            unit: °C
+            aggregations:
+              - type: cycles
+                validators:
+                  - {operator: "==", expected_value: 4}
+              - type: min_c
+                unit: °C
+                validators:
+                  - {operator: "<=", expected_value: -29.0}
+              - type: max_c
+                unit: °C
+                validators:
+                  - {operator: ">=", expected_value: 54.0}
+                  - {operator: "<=", expected_value: 58.0}
+      - name: Dwells
+        key: dwells
+        title: Functional check at each hot and cold dwell
+        x_axis:
+          legend: Dwell
+        y_axis:
+          - legend: Temperature
+            key: temperature
+            unit: °C
+          - legend: Centroid error
+            key: centroid
+            unit: arcsec
+            aggregations:
+              - type: max_arcsec
+                unit: arcsec
+                validators:
+                  - {operator: "<=", expected_value: 10.0}
+          - legend: Power
+            key: power
+            unit: W
+            aggregations:
+              - type: max_w
+                unit: W
+                validators:
+                  - {operator: "<=", expected_value: 3.5}
+
+teardown:
+  - name: Backfill
+    key: backfill
+    python: phases.backfill
+    measurements:
+      - name: Unit Temperature At Backfill
+        key: unit_temp_backfill_c
+        unit: °C
+        description: Dry nitrogen only comes in with the unit above the room's dew point; a cold lens fogs.
+        validators:
+          - {operator: ">=", expected_value: 15.0}
+      - name: Pressure End
+        key: pressure_end_hpa
+        unit: hPa
+        validators:
+          - {operator: ">=", expected_value: 900.0}
